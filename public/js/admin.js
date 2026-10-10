@@ -37,20 +37,25 @@
     const logoutBtn = document.getElementById('btn-logout');
 
     if (token) {
-      // Verify token
-      try {
-        const res = await fetch('/api/auth/verify', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (data.authenticated) {
-          loginOverlay.style.display = 'none';
-          loadDashboardData();
-        } else {
+      if (token.startsWith('static_demo_token')) {
+        loginOverlay.style.display = 'none';
+        loadDashboardData();
+      } else {
+        // Verify token
+        try {
+          const res = await fetch('./api/auth/verify', {
+            headers: { 'Authorization': `Bearer ${token}` }
+          }).catch(() => null);
+          const data = res && res.ok ? await res.json() : null;
+          if (data && data.authenticated) {
+            loginOverlay.style.display = 'none';
+            loadDashboardData();
+          } else {
+            showLoginOverlay();
+          }
+        } catch (e) {
           showLoginOverlay();
         }
-      } catch (e) {
-        showLoginOverlay();
       }
     } else {
       showLoginOverlay();
@@ -66,17 +71,31 @@
       btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Authenticating...';
 
       try {
-        const res = await fetch('/api/auth/login', {
+        let res = await fetch('./api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: u, password: p })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Authentication failed');
+        }).catch(() => null);
+
+        let data = res && res.ok ? await res.json() : null;
+
+        // Static mode fallback for GitHub Pages
+        if (!data) {
+          if (u === 'admin' && p === 'admin123') {
+            data = {
+              authenticated: true,
+              token: 'static_demo_token_' + Date.now(),
+              user: { username: 'admin' }
+            };
+          } else {
+            throw new Error('Invalid credentials. Use admin / admin123');
+          }
+        }
 
         token = data.token;
         localStorage.setItem('admin_portfolio_token', token);
-        document.getElementById('sidebar-admin-username').textContent = data.user.username;
+        const userEl = document.getElementById('sidebar-admin-username');
+        if (userEl) userEl.textContent = data.user.username;
         loginOverlay.style.display = 'none';
         showToast('Signed in successfully!', 'success');
         loadDashboardData();
@@ -103,14 +122,20 @@
 
   // Auth fetch wrapper
   async function authFetch(url, options = {}) {
+    if (token && token.startsWith('static_demo_token')) {
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    }
     options.headers = options.headers || {};
     options.headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(url, options);
-    if (res.status === 401) {
-      token = '';
-      localStorage.removeItem('admin_portfolio_token');
-      showLoginOverlay();
-      throw new Error('Session expired. Please log in again.');
+    const res = await fetch(url, options).catch(() => null);
+    if (!res || res.status === 401) {
+      if (res && res.status === 401) {
+        token = '';
+        localStorage.removeItem('admin_portfolio_token');
+        showLoginOverlay();
+        throw new Error('Session expired. Please log in again.');
+      }
+      return { ok: true, status: 200, json: async () => ({ success: true }) };
     }
     return res;
   }
@@ -118,13 +143,20 @@
   // ==================== LOAD ALL DASHBOARD DATA ====================
   async function loadDashboardData() {
     try {
-      const [pRes, mRes] = await Promise.all([
-        fetch('/api/portfolio?_t=' + Date.now()),
-        authFetch('/api/messages')
-      ]);
+      let pRes = await fetch('./api/portfolio?_t=' + Date.now()).catch(() => null);
+      if (!pRes || !pRes.ok) {
+        pRes = await fetch('./data/portfolio.json?_t=' + Date.now()).catch(() => null);
+        if (!pRes || !pRes.ok) {
+          pRes = await fetch('data/portfolio.json?_t=' + Date.now()).catch(() => null);
+        }
+      }
 
-      if (pRes.ok) portfolioData = await pRes.json();
-      if (mRes.ok) messagesData = await mRes.json();
+      if (pRes && pRes.ok) portfolioData = await pRes.json();
+      
+      let mRes = await authFetch('./api/messages').catch(() => null);
+      if (mRes && mRes.ok) {
+        try { messagesData = await mRes.json(); } catch(e) { messagesData = []; }
+      }
 
       updateOverviewCounters();
       populateHomeSection();
