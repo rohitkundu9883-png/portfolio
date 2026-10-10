@@ -15,6 +15,15 @@
   // Broadcast Channel for instantaneous cross-tab synchronization
   const syncChannel = 'BroadcastChannel' in window ? new BroadcastChannel('portfolio_sync_channel') : null;
 
+  // Helper to ensure asset paths work on GitHub Pages subpaths (/portfolio/) and standard hosts
+  function assetUrl(url) {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
+    if (url.startsWith('./')) return url;
+    if (url.startsWith('/')) return '.' + url;
+    return './' + url;
+  }
+
   // Initialize
   document.addEventListener('DOMContentLoaded', () => {
     initNavbar();
@@ -27,12 +36,12 @@
   // ==================== DATA FETCHING & RENDERING ====================
   async function loadPortfolioData(isLiveUpdate = false) {
     try {
-      let res = await fetch('/api/portfolio?_t=' + Date.now()).catch(() => null);
+      let res = await fetch('./api/portfolio?_t=' + Date.now()).catch(() => null);
       if (!res || !res.ok) {
         // Fallback for static hosting (GitHub Pages, Vercel Static, etc.)
-        res = await fetch('/data/portfolio.json?_t=' + Date.now()).catch(() => null);
+        res = await fetch('./data/portfolio.json?_t=' + Date.now()).catch(() => null);
         if (!res || !res.ok) {
-          res = await fetch('./data/portfolio.json?_t=' + Date.now()).catch(() => null);
+          res = await fetch('data/portfolio.json?_t=' + Date.now()).catch(() => null);
         }
       }
       if (!res || !res.ok) throw new Error('Failed to fetch portfolio data');
@@ -89,7 +98,7 @@
     // Avatar
     const avatarImg = document.getElementById('hero-avatar-img');
     if (avatarImg && home.avatar) {
-      avatarImg.src = home.avatar;
+      avatarImg.src = assetUrl(home.avatar);
       avatarImg.alt = `${home.name} profile picture`;
     }
 
@@ -108,7 +117,7 @@
 
     const resumeBtn = document.getElementById('hero-resume-btn');
     if (resumeBtn && home.resumeLink) {
-      resumeBtn.href = home.resumeLink;
+      resumeBtn.href = assetUrl(home.resumeLink);
     }
 
     // Social Links
@@ -255,7 +264,7 @@
     grid.innerHTML = filtered.map(p => `
       <div class="project-card" data-project-id="${escapeHtml(p.id)}">
         <div class="project-image-wrap">
-          <img src="${escapeHtml(p.image || '/uploads/project_saas.jpg')}" alt="${escapeHtml(p.title)}" loading="lazy">
+          <img src="${escapeHtml(assetUrl(p.image || './uploads/project_saas.jpg'))}" alt="${escapeHtml(p.title)}" loading="lazy">
           ${p.featured ? '<div class="project-featured-badge"><i class="fa-solid fa-star"></i> Featured</div>' : ''}
           <div class="project-category-tag">${escapeHtml(p.category)}</div>
         </div>
@@ -316,7 +325,7 @@
     grid.innerHTML = certs.map(c => `
       <div class="cert-card">
         <div class="cert-badge-frame">
-          <img src="${escapeHtml(c.image || '/uploads/cert_cloud.jpg')}" alt="${escapeHtml(c.title)}">
+          <img src="${escapeHtml(assetUrl(c.image || './uploads/cert_cloud.jpg'))}" alt="${escapeHtml(c.title)}">
         </div>
         <h4 class="cert-title">${escapeHtml(c.title)}</h4>
         <div class="cert-issuer">${escapeHtml(c.issuer)}</div>
@@ -343,7 +352,7 @@
     // Download Button
     const dlBtn = document.getElementById('resume-download-btn');
     if (dlBtn && resume.downloadUrl) {
-      dlBtn.href = resume.downloadUrl;
+      dlBtn.href = assetUrl(resume.downloadUrl);
     }
 
     // Experience Timeline
@@ -462,7 +471,7 @@
     title.textContent = proj.title;
     body.innerHTML = `
       <div style="margin-bottom: 1.5rem; border-radius: 14px; overflow: hidden; max-height: 320px;">
-        <img src="${escapeHtml(proj.image || '/uploads/project_saas.jpg')}" alt="${escapeHtml(proj.title)}" style="width: 100%; height: 100%; object-fit: cover;">
+        <img src="${escapeHtml(assetUrl(proj.image || './uploads/project_saas.jpg'))}" alt="${escapeHtml(proj.title)}" style="width: 100%; height: 100%; object-fit: cover;">
       </div>
       <div style="display: flex; gap: 0.6rem; flex-wrap: wrap; margin-bottom: 1.25rem;">
         <span class="project-category-tag" style="position: static;">${escapeHtml(proj.category)}</span>

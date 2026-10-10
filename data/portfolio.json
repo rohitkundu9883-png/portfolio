@@ -4,12 +4,12 @@
     "title": "Software Developer | AI & Full-Stack Developer",
     "tagline": "Building modern web applications and AI-powered solutions with clean, scalable, and user-focused technology.",
     "statusBadge": "🟢 Available for Software Development & AI Opportunities",
-    "avatar": "/uploads/Screenshot_2025-07-18_204543_1791393883320_644.png",
+    "avatar": "./uploads/Screenshot_2025-07-18_204543_1791393883320_644.png",
     "ctaPrimaryText": "View My Projects",
     "ctaPrimaryLink": "#projects",
     "ctaSecondaryText": "Let's Connect",
     "ctaSecondaryLink": "#contact",
-    "resumeLink": "/uploads/Rohit_Kundu_Resume.pdf",
+    "resumeLink": "./uploads/Rohit_Kundu_Resume.pdf",
     "stats": [
       {
         "value": "3+",
@@ -177,7 +177,7 @@
       "category": "Web App",
       "shortDesc": "TicTac X is an interactive Tic-Tac-Toe game featuring an AI opponent, multiple difficulty levels, real-time score tracking, and a modern neon-themed gaming interface.",
       "fullDesc": "TicTac X is a modern browser-based Tic-Tac-Toe game where players challenge NEXUS-9, an AI-powered opponent. Players can choose between Beginner, Tactician, and Unbeatable difficulty modes and play as X or O. The game features an interactive 3×3 board, automatic AI moves, win/draw detection, score tracking, sound controls, and a restart option. Its dark interface, neon cyan and pink accents, and futuristic AI-themed design create an engaging gaming experience. The project demonstrates interactive UI development, game logic, AI decision-making, and responsive web design.",
-      "image": "/uploads/Screenshot__155__1791612356434_53741.png",
+      "image": "./uploads/Screenshot__155__1791612356434_53741.png",
       "tags": [
         "React",
         "Vite",
@@ -196,7 +196,7 @@
   ],
   "certificates": [],
   "resume": {
-    "downloadUrl": "/uploads/Rohit_Kundu_Resume.pdf",
+    "downloadUrl": "./uploads/Rohit_Kundu_Resume.pdf",
     "summary": "Passionate Software Developer and Computer Science Engineering student specializing in full-stack web applications, AI-driven solutions, and responsive UI/UX. Driven by writing clean, performant code and building scalable real-world digital products.",
     "experience": [],
     "education": [

@@ -25,6 +25,7 @@ app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(__dirname));
 
 // Configure Multer for file uploads (images & PDFs)
 const storage = multer.diskStorage({
