@@ -47,7 +47,17 @@ async function runFullCRUDTest() {
   };
   console.log('✅ 1. Authentication: Success (Token acquired)');
 
-  // Step 2: Edit Home Hero Section
+  // Fetch original data for backup to restore after tests
+  const originalBackupRes = await request({
+    hostname: 'localhost',
+    port: 3000,
+    path: '/api/export',
+    method: 'GET',
+    headers: { 'Authorization': `Bearer ${token}` }
+  });
+  const originalPortfolio = originalBackupRes.data;
+
+  try {
   const updateHomeRes = await request({
     hostname: 'localhost',
     port: 3000,
@@ -242,6 +252,18 @@ async function runFullCRUDTest() {
   console.log('   Experience Count:', publicRes.data.resume?.experience?.length);
   console.log('========================================================');
   console.log('🎉 ALL CRUD ENDPOINTS, DATA PERSISTENCE & LIVE SYNC TESTED AND VERIFIED!\n');
+  } finally {
+    if (originalPortfolio) {
+      await request({
+        hostname: 'localhost',
+        port: 3000,
+        path: '/api/import',
+        method: 'POST',
+        headers: authHeaders
+      }, originalPortfolio);
+      console.log('🔄 Original portfolio data restored successfully.');
+    }
+  }
 }
 
 runFullCRUDTest().catch(console.error);

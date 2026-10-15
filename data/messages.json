@@ -1,1 +1,83 @@
-[]
+[
+  {
+    "id": "msg_1792004382747",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-14T18:59:42.747Z",
+    "read": false
+  },
+  {
+    "id": "msg_1792004237382",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-14T18:57:17.382Z",
+    "read": false
+  },
+  {
+    "id": "msg_1792000900280",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-14T18:01:40.280Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791956444367",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-14T05:40:44.367Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791955019528",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-14T05:16:59.528Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791700197696",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-11T06:29:57.696Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791699897667",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-11T06:24:57.667Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791699000424",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-11T06:10:00.424Z",
+    "read": false
+  },
+  {
+    "id": "msg_1791698616915",
+    "name": "Emily Watson",
+    "email": "emily@techcorp.com",
+    "subject": "Consulting Collaboration",
+    "message": "We loved your live portfolio and would love to collaborate!",
+    "createdAt": "2026-10-11T06:03:36.915Z",
+    "read": false
+  }
+]

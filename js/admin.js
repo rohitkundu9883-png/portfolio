@@ -30,32 +30,57 @@
     initRealtimeListener();
   });
 
+  // API URL resolver supporting direct node server (port 3000), relative paths, and dev servers (like Live Server port 5500)
+  function getApiUrl(endpoint) {
+    const clean = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+    if (typeof window !== 'undefined' && window.location) {
+      if (window.location.protocol === 'file:') {
+        return `http://localhost:3000${clean}`;
+      }
+      if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+        if (window.location.port !== '3000' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+          return `http://localhost:3000${clean}`;
+        }
+      }
+    }
+    return clean;
+  }
+
+  function assetUrl(url) {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('data:')) return url;
+    if (url.startsWith('./')) return url;
+    if (url.startsWith('/')) return '.' + url;
+    return './' + url;
+  }
+
   // ==================== AUTHENTICATION ====================
   async function initAuth() {
     const loginOverlay = document.getElementById('login-overlay');
     const loginForm = document.getElementById('login-form');
     const logoutBtn = document.getElementById('btn-logout');
 
+    // Clean up any old static demo token that causes fake saves
+    if (token && token.startsWith('static_demo_token')) {
+      token = '';
+      localStorage.removeItem('admin_portfolio_token');
+    }
+
     if (token) {
-      if (token.startsWith('static_demo_token')) {
-        loginOverlay.style.display = 'none';
-        loadDashboardData();
-      } else {
-        // Verify token
-        try {
-          const res = await fetch('./api/auth/verify', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          }).catch(() => null);
-          const data = res && res.ok ? await res.json() : null;
-          if (data && data.authenticated) {
-            loginOverlay.style.display = 'none';
-            loadDashboardData();
-          } else {
-            showLoginOverlay();
-          }
-        } catch (e) {
+      // Verify token with backend
+      try {
+        const res = await fetch(getApiUrl('/api/auth/verify'), {
+          headers: { 'Authorization': `Bearer ${token}` }
+        }).catch(() => null);
+        const data = res && res.ok ? await res.json() : null;
+        if (data && data.authenticated) {
+          loginOverlay.style.display = 'none';
+          loadDashboardData();
+        } else {
           showLoginOverlay();
         }
+      } catch (e) {
+        showLoginOverlay();
       }
     } else {
       showLoginOverlay();
@@ -71,7 +96,7 @@
       btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Authenticating...';
 
       try {
-        let res = await fetch('./api/auth/login', {
+        let res = await fetch(getApiUrl('/api/auth/login'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: u, password: p })
@@ -79,23 +104,14 @@
 
         let data = res && res.ok ? await res.json() : null;
 
-        // Static mode fallback for GitHub Pages
-        if (!data) {
-          if (u === 'admin' && p === 'admin123') {
-            data = {
-              authenticated: true,
-              token: 'static_demo_token_' + Date.now(),
-              user: { username: 'admin' }
-            };
-          } else {
-            throw new Error('Invalid credentials. Use admin / admin123');
-          }
+        if (!data || !data.token) {
+          throw new Error('Invalid credentials or backend server unreachable at http://localhost:3000');
         }
 
         token = data.token;
         localStorage.setItem('admin_portfolio_token', token);
         const userEl = document.getElementById('sidebar-admin-username');
-        if (userEl) userEl.textContent = data.user.username;
+        if (userEl && data.user) userEl.textContent = data.user.username;
         loginOverlay.style.display = 'none';
         showToast('Signed in successfully!', 'success');
         loadDashboardData();
@@ -120,42 +136,72 @@
     if (overlay) overlay.style.display = 'flex';
   }
 
-  // Auth fetch wrapper
+  // Auth fetch wrapper with real error reporting and no fake mocks
   async function authFetch(url, options = {}) {
-    if (token && token.startsWith('static_demo_token')) {
-      return { ok: true, status: 200, json: async () => ({ success: true }) };
-    }
     options.headers = options.headers || {};
-    options.headers['Authorization'] = `Bearer ${token}`;
-    const res = await fetch(url, options).catch(() => null);
-    if (!res || res.status === 401) {
-      if (res && res.status === 401) {
-        token = '';
-        localStorage.removeItem('admin_portfolio_token');
-        showLoginOverlay();
-        throw new Error('Session expired. Please log in again.');
-      }
-      return { ok: true, status: 200, json: async () => ({ success: true }) };
+    if (token) {
+      options.headers['Authorization'] = `Bearer ${token}`;
     }
+
+    const fullUrl = getApiUrl(url);
+    let res = null;
+    try {
+      res = await fetch(fullUrl, options);
+    } catch (err) {
+      console.error('Fetch connection error for ' + fullUrl, err);
+      throw new Error('Cannot connect to backend server. Ensure node server.js is running on http://localhost:3000');
+    }
+
+    if (res.status === 401) {
+      token = '';
+      localStorage.removeItem('admin_portfolio_token');
+      showLoginOverlay();
+      throw new Error('Admin session expired. Please sign in again.');
+    }
+
+    if (!res.ok) {
+      let errMsg = `Server request failed with status ${res.status}`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) errMsg = errJson.error;
+      } catch (e) {}
+      throw new Error(errMsg);
+    }
+
     return res;
   }
 
   // ==================== LOAD ALL DASHBOARD DATA ====================
   async function loadDashboardData() {
     try {
-      let pRes = await fetch('./api/portfolio?_t=' + Date.now()).catch(() => null);
+      let pRes = await fetch(getApiUrl('/api/portfolio?_t=' + Date.now()), { cache: 'no-store' }).catch(() => null);
       if (!pRes || !pRes.ok) {
-        pRes = await fetch('./data/portfolio.json?_t=' + Date.now()).catch(() => null);
+        pRes = await fetch('./data/portfolio.json?_t=' + Date.now(), { cache: 'no-store' }).catch(() => null);
         if (!pRes || !pRes.ok) {
-          pRes = await fetch('data/portfolio.json?_t=' + Date.now()).catch(() => null);
+          pRes = await fetch('data/portfolio.json?_t=' + Date.now(), { cache: 'no-store' }).catch(() => null);
         }
       }
 
-      if (pRes && pRes.ok) portfolioData = await pRes.json();
+      if (pRes && pRes.ok) {
+        portfolioData = await pRes.json();
+      } else if (typeof window !== 'undefined' && window.__INITIAL_PORTFOLIO_DATA__) {
+        portfolioData = window.__INITIAL_PORTFOLIO_DATA__;
+      }
+
+      if (!portfolioData) {
+        throw new Error('Portfolio data could not be fetched.');
+      }
       
       let mRes = await authFetch('./api/messages').catch(() => null);
       if (mRes && mRes.ok) {
-        try { messagesData = await mRes.json(); } catch(e) { messagesData = []; }
+        try {
+          const resJson = await mRes.json();
+          messagesData = Array.isArray(resJson) ? resJson : [];
+        } catch(e) {
+          messagesData = [];
+        }
+      } else {
+        messagesData = [];
       }
 
       updateOverviewCounters();
@@ -177,21 +223,30 @@
   function updateOverviewCounters() {
     if (!portfolioData) return;
 
-    const totalProjects = portfolioData.projects ? portfolioData.projects.length : 0;
-    const totalSkills = portfolioData.skills ? portfolioData.skills.length : 0;
-    const totalCerts = portfolioData.certificates ? portfolioData.certificates.length : 0;
-    const totalMessages = messagesData ? messagesData.length : 0;
-    const unreadMessages = messagesData ? messagesData.filter(m => !m.read).length : 0;
+    const totalProjects = portfolioData.projects && Array.isArray(portfolioData.projects) ? portfolioData.projects.length : 0;
+    const totalSkills = portfolioData.skills && Array.isArray(portfolioData.skills) ? portfolioData.skills.length : 0;
+    const totalCerts = portfolioData.certificates && Array.isArray(portfolioData.certificates) ? portfolioData.certificates.length : 0;
+    const msgList = Array.isArray(messagesData) ? messagesData : [];
+    const totalMessages = msgList.length;
+    const unreadMessages = msgList.filter(m => !m.read).length;
 
-    document.getElementById('stat-total-projects').textContent = totalProjects;
-    document.getElementById('stat-total-skills').textContent = totalSkills;
-    document.getElementById('stat-total-certs').textContent = totalCerts;
-    document.getElementById('stat-total-messages').textContent = totalMessages;
+    const elProjects = document.getElementById('stat-total-projects');
+    if (elProjects) elProjects.textContent = totalProjects;
+    const elSkills = document.getElementById('stat-total-skills');
+    if (elSkills) elSkills.textContent = totalSkills;
+    const elCerts = document.getElementById('stat-total-certs');
+    if (elCerts) elCerts.textContent = totalCerts;
+    const elMsgs = document.getElementById('stat-total-messages');
+    if (elMsgs) elMsgs.textContent = totalMessages;
 
-    document.getElementById('skills-count-badge').textContent = totalSkills;
-    document.getElementById('projects-count-badge').textContent = totalProjects;
-    document.getElementById('certs-count-badge').textContent = totalCerts;
-    document.getElementById('messages-count-badge').textContent = unreadMessages;
+    const bSkills = document.getElementById('skills-count-badge');
+    if (bSkills) bSkills.textContent = totalSkills;
+    const bProjects = document.getElementById('projects-count-badge');
+    if (bProjects) bProjects.textContent = totalProjects;
+    const bCerts = document.getElementById('certs-count-badge');
+    if (bCerts) bCerts.textContent = totalCerts;
+    const bMsgs = document.getElementById('messages-count-badge');
+    if (bMsgs) bMsgs.textContent = unreadMessages;
   }
 
   // ==================== SECTION: HOME / HERO ====================
@@ -207,7 +262,7 @@
     document.getElementById('home-ctaSecondaryLink').value = h.ctaSecondaryLink || '';
     document.getElementById('home-resumeLink').value = h.resumeLink || '';
     document.getElementById('home-avatar').value = h.avatar || '';
-    document.getElementById('home-avatar-preview').src = h.avatar || '/uploads/avatar.jpg';
+    document.getElementById('home-avatar-preview').src = h.avatar || './uploads/avatar.jpg';
 
     // Stats bar inputs
     const statsContainer = document.getElementById('home-stats-inputs');
@@ -337,7 +392,7 @@
     container.innerHTML = projects.map(p => `
       <div class="admin-item-card">
         <div style="height: 160px; border-radius: var(--admin-radius-sm); overflow: hidden; position: relative;">
-          <img src="${escapeHtml(p.image || '/uploads/project_saas.jpg')}" alt="${escapeHtml(p.title)}" style="width: 100%; height: 100%; object-fit: cover;">
+          <img src="${escapeHtml(p.image || './uploads/project_saas.jpg')}" alt="${escapeHtml(p.title)}" style="width: 100%; height: 100%; object-fit: cover;">
           ${p.featured ? '<span style="position: absolute; top: 8px; left: 8px; background: var(--admin-primary); padding: 0.2rem 0.6rem; border-radius: 99px; font-size: 0.72rem; font-weight: 700; color: #fff;"><i class="fa-solid fa-star"></i> Featured</span>' : ''}
           <span style="position: absolute; top: 8px; right: 8px; background: rgba(0,0,0,0.7); padding: 0.2rem 0.6rem; border-radius: 99px; font-size: 0.72rem; font-family: var(--admin-font-mono); color: #38bdf8;">${escapeHtml(p.category)}</span>
         </div>
@@ -375,7 +430,7 @@
     document.getElementById('modal-project-githubUrl').value = proj.githubUrl || '';
     document.getElementById('modal-project-tags').value = (proj.tags || []).join(', ');
     document.getElementById('modal-project-image').value = proj.image || '';
-    document.getElementById('modal-project-img-preview').src = proj.image || '/uploads/project_saas.jpg';
+    document.getElementById('modal-project-img-preview').src = proj.image || './uploads/project_saas.jpg';
     document.getElementById('modal-project-featured').checked = Boolean(proj.featured);
 
     openModal('modal-project');
@@ -390,7 +445,7 @@
       <div class="admin-item-card">
         <div style="display: flex; gap: 1rem; align-items: center;">
           <div style="width: 55px; height: 55px; border-radius: 50%; overflow: hidden; flex-shrink: 0; border: 2px solid #f59e0b;">
-            <img src="${escapeHtml(c.image || '/uploads/cert_cloud.jpg')}" alt="Badge" style="width: 100%; height: 100%; object-fit: cover;">
+            <img src="${escapeHtml(c.image || './uploads/cert_cloud.jpg')}" alt="Badge" style="width: 100%; height: 100%; object-fit: cover;">
           </div>
           <div>
             <h4 style="font-size: 1.05rem; margin-bottom: 0.2rem;">${escapeHtml(c.title)}</h4>
@@ -427,7 +482,7 @@
     document.getElementById('modal-cert-credId').value = cert.credentialId || '';
     document.getElementById('modal-cert-url').value = cert.credentialUrl || '';
     document.getElementById('modal-cert-image').value = cert.image || '';
-    document.getElementById('modal-cert-img-preview').src = cert.image || '/uploads/cert_cloud.jpg';
+    document.getElementById('modal-cert-img-preview').src = cert.image || './uploads/cert_cloud.jpg';
 
     openModal('modal-cert');
   };
@@ -672,31 +727,49 @@
   function initForms() {
     // 1. SAVE HOME / HERO
     document.getElementById('btn-save-home').addEventListener('click', async () => {
-      const statInputsVal = document.querySelectorAll('.stat-input-val');
-      const statInputsLbl = document.querySelectorAll('.stat-input-lbl');
-      const stats = [];
-      statInputsVal.forEach((vInput, i) => {
-        stats.push({
-          value: vInput.value.trim(),
-          label: statInputsLbl[i] ? statInputsLbl[i].value.trim() : ''
-        });
-      });
-
-      const body = {
-        name: document.getElementById('home-name').value.trim(),
-        title: document.getElementById('home-title').value.trim(),
-        tagline: document.getElementById('home-tagline').value.trim(),
-        statusBadge: document.getElementById('home-statusBadge').value.trim(),
-        ctaPrimaryText: document.getElementById('home-ctaPrimaryText').value.trim(),
-        ctaPrimaryLink: document.getElementById('home-ctaPrimaryLink').value.trim(),
-        ctaSecondaryText: document.getElementById('home-ctaSecondaryText').value.trim(),
-        ctaSecondaryLink: document.getElementById('home-ctaSecondaryLink').value.trim(),
-        resumeLink: document.getElementById('home-resumeLink').value.trim(),
-        avatar: document.getElementById('home-avatar').value.trim(),
-        stats
-      };
+      const saveBtn = document.getElementById('btn-save-home');
+      const origText = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      saveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
 
       try {
+        const avatarFileInput = document.getElementById('home-avatar-file');
+        let avatarUrl = document.getElementById('home-avatar').value.trim();
+
+        if (avatarFileInput && avatarFileInput.files && avatarFileInput.files[0]) {
+          saveBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-spin"></i> Uploading avatar...';
+          const uploaded = await uploadFile(avatarFileInput.files[0]);
+          if (uploaded) {
+            avatarUrl = uploaded;
+            document.getElementById('home-avatar').value = uploaded;
+            document.getElementById('home-avatar-preview').src = uploaded;
+          }
+        }
+
+        const statInputsVal = document.querySelectorAll('.stat-input-val');
+        const statInputsLbl = document.querySelectorAll('.stat-input-lbl');
+        const stats = [];
+        statInputsVal.forEach((vInput, i) => {
+          stats.push({
+            value: vInput.value.trim(),
+            label: statInputsLbl[i] ? statInputsLbl[i].value.trim() : ''
+          });
+        });
+
+        const body = {
+          name: document.getElementById('home-name').value.trim(),
+          title: document.getElementById('home-title').value.trim(),
+          tagline: document.getElementById('home-tagline').value.trim(),
+          statusBadge: document.getElementById('home-statusBadge').value.trim(),
+          ctaPrimaryText: document.getElementById('home-ctaPrimaryText').value.trim(),
+          ctaPrimaryLink: document.getElementById('home-ctaPrimaryLink').value.trim(),
+          ctaSecondaryText: document.getElementById('home-ctaSecondaryText').value.trim(),
+          ctaSecondaryLink: document.getElementById('home-ctaSecondaryLink').value.trim(),
+          resumeLink: document.getElementById('home-resumeLink').value.trim(),
+          avatar: avatarUrl,
+          stats
+        };
+
         const res = await authFetch('/api/home', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -707,6 +780,9 @@
         notifyLiveSync();
       } catch (err) {
         showToast(err.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = origText;
       }
     });
 
@@ -815,27 +891,48 @@
       document.getElementById('modal-project-title').textContent = 'Add New Project';
       document.getElementById('form-modal-project').reset();
       document.getElementById('modal-project-id').value = '';
-      document.getElementById('modal-project-img-preview').src = '/uploads/project_saas.jpg';
+      document.getElementById('modal-project-img-preview').src = './uploads/project_saas.jpg';
       openModal('modal-project');
     });
 
     document.getElementById('form-modal-project').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const id = document.getElementById('modal-project-id').value;
-      const body = {
-        title: document.getElementById('modal-project-name').value.trim(),
-        category: document.getElementById('modal-project-category').value,
-        metrics: document.getElementById('modal-project-metrics').value.trim(),
-        shortDesc: document.getElementById('modal-project-shortDesc').value.trim(),
-        fullDesc: document.getElementById('modal-project-fullDesc').value.trim(),
-        liveUrl: document.getElementById('modal-project-liveUrl').value.trim(),
-        githubUrl: document.getElementById('modal-project-githubUrl').value.trim(),
-        tags: document.getElementById('modal-project-tags').value.split(',').map(t => t.trim()).filter(Boolean),
-        image: document.getElementById('modal-project-image').value.trim() || '/uploads/project_saas.jpg',
-        featured: document.getElementById('modal-project-featured').checked
-      };
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      const originalBtnHtml = submitBtn ? submitBtn.innerHTML : 'Save Project';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+      }
 
       try {
+        const id = document.getElementById('modal-project-id').value;
+        const fileInput = document.getElementById('modal-project-file');
+        let imageUrl = document.getElementById('modal-project-image').value.trim();
+
+        // If user picked a file, ensure it's uploaded first
+        if (fileInput && fileInput.files && fileInput.files[0]) {
+          if (submitBtn) submitBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-spin"></i> Uploading screenshot...';
+          const uploadedUrl = await uploadFile(fileInput.files[0]);
+          if (uploadedUrl) {
+            imageUrl = uploadedUrl;
+            document.getElementById('modal-project-image').value = uploadedUrl;
+            document.getElementById('modal-project-img-preview').src = uploadedUrl;
+          }
+        }
+
+        const body = {
+          title: document.getElementById('modal-project-name').value.trim(),
+          category: document.getElementById('modal-project-category').value,
+          metrics: document.getElementById('modal-project-metrics').value.trim(),
+          shortDesc: document.getElementById('modal-project-shortDesc').value.trim(),
+          fullDesc: document.getElementById('modal-project-fullDesc').value.trim(),
+          liveUrl: document.getElementById('modal-project-liveUrl').value.trim(),
+          githubUrl: document.getElementById('modal-project-githubUrl').value.trim(),
+          tags: document.getElementById('modal-project-tags').value.split(',').map(t => t.trim()).filter(Boolean),
+          image: imageUrl || './uploads/project_saas.jpg',
+          featured: document.getElementById('modal-project-featured').checked
+        };
+
         const url = id ? `/api/projects/${id}` : '/api/projects';
         const method = id ? 'PUT' : 'POST';
         const res = await authFetch(url, {
@@ -851,6 +948,11 @@
         await loadDashboardData();
       } catch (err) {
         showToast(err.message, 'error');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalBtnHtml;
+        }
       }
     });
 
@@ -859,23 +961,43 @@
       document.getElementById('modal-cert-title').textContent = 'Add Certificate';
       document.getElementById('form-modal-cert').reset();
       document.getElementById('modal-cert-id').value = '';
-      document.getElementById('modal-cert-img-preview').src = '/uploads/cert_cloud.jpg';
+      document.getElementById('modal-cert-img-preview').src = './uploads/cert_cloud.jpg';
       openModal('modal-cert');
     });
 
     document.getElementById('form-modal-cert').addEventListener('submit', async (e) => {
       e.preventDefault();
-      const id = document.getElementById('modal-cert-id').value;
-      const body = {
-        title: document.getElementById('modal-cert-name').value.trim(),
-        issuer: document.getElementById('modal-cert-issuer').value.trim(),
-        issueDate: document.getElementById('modal-cert-date').value.trim(),
-        credentialId: document.getElementById('modal-cert-credId').value.trim(),
-        credentialUrl: document.getElementById('modal-cert-url').value.trim(),
-        image: document.getElementById('modal-cert-image').value.trim() || '/uploads/cert_cloud.jpg'
-      };
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      const originalBtnHtml = submitBtn ? submitBtn.innerHTML : 'Save Certificate';
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+      }
 
       try {
+        const id = document.getElementById('modal-cert-id').value;
+        const fileInput = document.getElementById('modal-cert-file');
+        let imageUrl = document.getElementById('modal-cert-image').value.trim();
+
+        if (fileInput && fileInput.files && fileInput.files[0]) {
+          if (submitBtn) submitBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-up fa-spin"></i> Uploading badge...';
+          const uploadedUrl = await uploadFile(fileInput.files[0]);
+          if (uploadedUrl) {
+            imageUrl = uploadedUrl;
+            document.getElementById('modal-cert-image').value = uploadedUrl;
+            document.getElementById('modal-cert-img-preview').src = uploadedUrl;
+          }
+        }
+
+        const body = {
+          title: document.getElementById('modal-cert-name').value.trim(),
+          issuer: document.getElementById('modal-cert-issuer').value.trim(),
+          issueDate: document.getElementById('modal-cert-date').value.trim(),
+          credentialId: document.getElementById('modal-cert-credId').value.trim(),
+          credentialUrl: document.getElementById('modal-cert-url').value.trim(),
+          image: imageUrl || './uploads/cert_cloud.jpg'
+        };
+
         const url = id ? `/api/certificates/${id}` : '/api/certificates';
         const method = id ? 'PUT' : 'POST';
         const res = await authFetch(url, {
@@ -891,6 +1013,11 @@
         await loadDashboardData();
       } catch (err) {
         showToast(err.message, 'error');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = originalBtnHtml;
+        }
       }
     });
 
@@ -1102,19 +1229,33 @@
   }
 
   async function uploadFile(file) {
+    if (!token) {
+      showLoginOverlay();
+      showToast('Please sign in before uploading files', 'error');
+      return null;
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      showToast('Uploading file...', 'info');
-      const res = await fetch('/api/upload', {
+      showToast('Uploading ' + (file.name || 'file') + '...', 'info');
+      const res = await fetch(getApiUrl('/api/upload'), {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` },
         body: formData
       });
+
+      if (res.status === 401) {
+        token = '';
+        localStorage.removeItem('admin_portfolio_token');
+        showLoginOverlay();
+        throw new Error('Session expired. Please sign in again to upload.');
+      }
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Upload failed');
-      return data.fileUrl;
+      return data.fileUrl || data.url;
     } catch (err) {
       showToast(err.message, 'error');
       return null;
@@ -1146,6 +1287,26 @@
       }
     });
 
+    // Export JSON backup handler
+    const exportBtn = document.getElementById('btn-export-json');
+    if (exportBtn) {
+      exportBtn.addEventListener('click', (e) => {
+        if (portfolioData) {
+          e.preventDefault();
+          const blob = new Blob([JSON.stringify(portfolioData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `portfolio_backup_${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          showToast('Portfolio JSON backup downloaded!', 'success');
+        }
+      });
+    }
+
     // Import JSON backup
     const importInput = document.getElementById('input-import-json');
     importInput.addEventListener('change', async () => {
@@ -1172,13 +1333,33 @@
     });
   }
 
-  // ==================== TAB NAVIGATION ====================
+  // ==================== TAB NAVIGATION & RESPONSIVE SIDEBAR ====================
   function initTabNavigation() {
+    // Mobile sidebar toggle button
+    const sidebarToggle = document.getElementById('btn-sidebar-toggle');
+    const sidebar = document.getElementById('admin-sidebar');
+    if (sidebarToggle && sidebar) {
+      sidebarToggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sidebar.classList.toggle('open');
+      });
+
+      // Close sidebar when clicking outside on mobile
+      document.addEventListener('click', (e) => {
+        if (window.innerWidth <= 900 && !sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
+          sidebar.classList.remove('open');
+        }
+      });
+    }
+
     document.querySelectorAll('.admin-nav-item').forEach(item => {
       item.addEventListener('click', (e) => {
         e.preventDefault();
         const targetTab = item.getAttribute('data-tab');
         switchTab(targetTab);
+        if (sidebar && window.innerWidth <= 900) {
+          sidebar.classList.remove('open');
+        }
       });
     });
   }
@@ -1221,8 +1402,13 @@
   // ==================== REAL-TIME LIVE SYNC ====================
   function notifyLiveSync() {
     if (syncChannel) {
-      syncChannel.postMessage({ type: 'PORTFOLIO_UPDATED', timestamp: Date.now() });
+      try {
+        syncChannel.postMessage({ type: 'PORTFOLIO_UPDATED', timestamp: Date.now() });
+      } catch (e) {}
     }
+    try {
+      localStorage.setItem('portfolio_last_updated', Date.now().toString());
+    } catch (e) {}
   }
 
   function initRealtimeListener() {
@@ -1231,10 +1417,10 @@
         if (event.data && event.data.type === 'NEW_MESSAGE_SENT') {
           showToast('📬 New contact inquiry received from visitor!', 'info');
           authFetch('/api/messages').then(res => res.json()).then(msgs => {
-            messagesData = msgs;
+            messagesData = Array.isArray(msgs) ? msgs : [];
             renderMessagesInbox();
             updateOverviewCounters();
-          });
+          }).catch(() => {});
         }
       };
     }

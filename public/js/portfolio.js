@@ -15,6 +15,22 @@
   // Broadcast Channel for instantaneous cross-tab synchronization
   const syncChannel = 'BroadcastChannel' in window ? new BroadcastChannel('portfolio_sync_channel') : null;
 
+  // API URL resolver supporting direct node server (port 3000), relative paths, and dev servers (like Live Server port 5500)
+  function getApiUrl(endpoint) {
+    const clean = endpoint.startsWith('/') ? endpoint : '/' + endpoint;
+    if (typeof window !== 'undefined' && window.location) {
+      if (window.location.protocol === 'file:') {
+        return `http://localhost:3000${clean}`;
+      }
+      if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+        if (window.location.port !== '3000' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+          return `http://localhost:3000${clean}`;
+        }
+      }
+    }
+    return clean;
+  }
+
   // Helper to ensure asset paths work on GitHub Pages subpaths (/portfolio/) and standard hosts
   function assetUrl(url) {
     if (!url) return '';
@@ -36,17 +52,23 @@
   // ==================== DATA FETCHING & RENDERING ====================
   async function loadPortfolioData(isLiveUpdate = false) {
     try {
-      let res = await fetch('./api/portfolio?_t=' + Date.now()).catch(() => null);
+      let res = await fetch(getApiUrl('/api/portfolio?_t=' + Date.now()), { cache: 'no-store' }).catch(() => null);
       if (!res || !res.ok) {
         // Fallback for static hosting (GitHub Pages, Vercel Static, etc.)
-        res = await fetch('./data/portfolio.json?_t=' + Date.now()).catch(() => null);
+        res = await fetch('./data/portfolio.json?_t=' + Date.now(), { cache: 'no-store' }).catch(() => null);
         if (!res || !res.ok) {
-          res = await fetch('data/portfolio.json?_t=' + Date.now()).catch(() => null);
+          res = await fetch('data/portfolio.json?_t=' + Date.now(), { cache: 'no-store' }).catch(() => null);
         }
       }
-      if (!res || !res.ok) throw new Error('Failed to fetch portfolio data');
+
+      if (res && res.ok) {
+        portfolioData = await res.json();
+      } else if (typeof window !== 'undefined' && window.__INITIAL_PORTFOLIO_DATA__) {
+        portfolioData = window.__INITIAL_PORTFOLIO_DATA__;
+      } else {
+        throw new Error('Failed to fetch portfolio data');
+      }
       
-      portfolioData = await res.json();
       renderAll(portfolioData);
 
       if (isLiveUpdate) {
@@ -54,7 +76,12 @@
       }
     } catch (err) {
       console.error('Error loading portfolio:', err);
-      showToast('Error loading live portfolio data', 'error');
+      if (typeof window !== 'undefined' && window.__INITIAL_PORTFOLIO_DATA__) {
+        portfolioData = window.__INITIAL_PORTFOLIO_DATA__;
+        renderAll(portfolioData);
+      } else {
+        showToast('Error loading live portfolio data', 'error');
+      }
     }
   }
 
@@ -122,10 +149,14 @@
 
     // Social Links
     const socialsContainer = document.getElementById('hero-socials-container');
-    if (socialsContainer && home.socialLinks) {
-      socialsContainer.innerHTML = home.socialLinks.map(s => {
+    const heroSocials = (home && home.socialLinks && home.socialLinks.length)
+      ? home.socialLinks
+      : (portfolioData && portfolioData.contact && portfolioData.contact.socials ? portfolioData.contact.socials : []);
+
+    if (socialsContainer && heroSocials.length) {
+      socialsContainer.innerHTML = heroSocials.map(s => {
         let iconClass = 'fa-solid fa-link';
-        const p = s.platform.toLowerCase();
+        const p = (s.platform || '').toLowerCase();
         if (p.includes('github')) iconClass = 'fa-brands fa-github';
         else if (p.includes('linkedin')) iconClass = 'fa-brands fa-linkedin-in';
         else if (p.includes('twitter') || p.includes('x')) iconClass = 'fa-brands fa-x-twitter';
@@ -153,8 +184,12 @@
       // Update floating badges if available
       const f1 = document.getElementById('float-badge-1-val');
       const f2 = document.getElementById('float-badge-2-val');
+      const f1Label = document.getElementById('float-badge-1-label');
+      const f2Label = document.getElementById('float-badge-2-label');
       if (f1 && home.stats[0]) f1.textContent = home.stats[0].value;
+      if (f1Label && home.stats[0]) f1Label.textContent = home.stats[0].label;
       if (f2 && home.stats[1]) f2.textContent = home.stats[1].value;
+      if (f2Label && home.stats[1]) f2Label.textContent = home.stats[1].label;
     }
   }
 
@@ -204,14 +239,49 @@
   function renderSkills(skills) {
     if (!skills) return;
 
-    // Filter Skills
-    const filtered = skills.filter(s => {
-      if (activeSkillFilter === 'all') return true;
-      return s.category.toLowerCase() === activeSkillFilter.toLowerCase();
-    });
+    // Dynamically populate category filter tabs if needed
+    const filterTabsContainer = document.getElementById('skills-filter-tabs');
+    if (filterTabsContainer) {
+      const rawCategories = [...new Set(skills.map(s => s.category).filter(Boolean))];
+      const categories = ['all', ...rawCategories];
 
+      filterTabsContainer.innerHTML = categories.map(cat => {
+        const isActive = cat.toLowerCase() === activeSkillFilter.toLowerCase();
+        const label = cat === 'all' ? 'All Skills' : cat;
+        return `<button class="filter-tab ${isActive ? 'active' : ''}" data-category="${escapeHtml(cat)}">${escapeHtml(label)}</button>`;
+      }).join('');
+
+      filterTabsContainer.querySelectorAll('.filter-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          filterTabsContainer.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          activeSkillFilter = tab.getAttribute('data-category');
+          renderSkillsList(portfolioData ? portfolioData.skills : []);
+        });
+      });
+    }
+
+    renderSkillsList(skills);
+  }
+
+  function renderSkillsList(skills) {
     const grid = document.getElementById('skills-grid');
     if (!grid) return;
+
+    const filtered = skills.filter(s => {
+      if (activeSkillFilter === 'all') return true;
+      return (s.category || '').toLowerCase() === activeSkillFilter.toLowerCase();
+    });
+
+    if (filtered.length === 0) {
+      grid.innerHTML = `
+        <div class="empty-state-notice" style="grid-column: 1 / -1; text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+          <i class="fa-solid fa-code" style="font-size: 2rem; margin-bottom: 0.75rem; opacity: 0.5;"></i>
+          <p>No skills found in this category.</p>
+        </div>
+      `;
+      return;
+    }
 
     grid.innerHTML = filtered.map(s => `
       <div class="skill-card">
@@ -233,33 +303,54 @@
         </div>
       </div>
     `).join('');
-
-    // Attach filter tabs event listeners
-    const filterTabsContainer = document.getElementById('skills-filter-tabs');
-    if (filterTabsContainer && !filterTabsContainer.dataset.initialized) {
-      filterTabsContainer.dataset.initialized = 'true';
-      filterTabsContainer.querySelectorAll('.filter-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          filterTabsContainer.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-          activeSkillFilter = tab.getAttribute('data-category');
-          renderSkills(portfolioData ? portfolioData.skills : []);
-        });
-      });
-    }
   }
 
   function renderProjects(projects) {
     if (!projects) return;
 
-    // Filter Projects
-    const filtered = projects.filter(p => {
-      if (activeProjectFilter === 'all') return true;
-      return p.category.toLowerCase() === activeProjectFilter.toLowerCase();
-    });
+    // Dynamically populate category filter tabs
+    const filterTabsContainer = document.getElementById('projects-filter-tabs');
+    if (filterTabsContainer) {
+      const rawCategories = [...new Set(projects.map(p => p.category).filter(Boolean))];
+      const categories = ['all', ...rawCategories];
 
+      filterTabsContainer.innerHTML = categories.map(cat => {
+        const isActive = cat.toLowerCase() === activeProjectFilter.toLowerCase();
+        const label = cat === 'all' ? 'All Projects' : cat;
+        return `<button class="filter-tab ${isActive ? 'active' : ''}" data-project-filter="${escapeHtml(cat)}">${escapeHtml(label)}</button>`;
+      }).join('');
+
+      filterTabsContainer.querySelectorAll('.filter-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          filterTabsContainer.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
+          tab.classList.add('active');
+          activeProjectFilter = tab.getAttribute('data-project-filter');
+          renderProjectsList(portfolioData ? portfolioData.projects : []);
+        });
+      });
+    }
+
+    renderProjectsList(projects);
+  }
+
+  function renderProjectsList(projects) {
     const grid = document.getElementById('projects-grid');
     if (!grid) return;
+
+    const filtered = projects.filter(p => {
+      if (activeProjectFilter === 'all') return true;
+      return (p.category || '').toLowerCase() === activeProjectFilter.toLowerCase();
+    });
+
+    if (filtered.length === 0) {
+      grid.innerHTML = `
+        <div class="empty-state-notice" style="grid-column: 1 / -1; text-align: center; padding: 3rem 1rem; color: var(--text-muted); background: var(--bg-card); border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+          <i class="fa-solid fa-folder-open" style="font-size: 2.2rem; margin-bottom: 0.75rem; opacity: 0.5;"></i>
+          <p>No projects currently displayed in this category.</p>
+        </div>
+      `;
+      return;
+    }
 
     grid.innerHTML = filtered.map(p => `
       <div class="project-card" data-project-id="${escapeHtml(p.id)}">
@@ -300,20 +391,6 @@
         openProjectModal(projId);
       });
     });
-
-    // Filter tabs
-    const filterTabsContainer = document.getElementById('projects-filter-tabs');
-    if (filterTabsContainer && !filterTabsContainer.dataset.initialized) {
-      filterTabsContainer.dataset.initialized = 'true';
-      filterTabsContainer.querySelectorAll('.filter-tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-          filterTabsContainer.querySelectorAll('.filter-tab').forEach(t => t.classList.remove('active'));
-          tab.classList.add('active');
-          activeProjectFilter = tab.getAttribute('data-project-filter');
-          renderProjects(portfolioData ? portfolioData.projects : []);
-        });
-      });
-    }
   }
 
   function renderCertificates(certs) {
@@ -321,6 +398,17 @@
 
     const grid = document.getElementById('certificates-grid');
     if (!grid) return;
+
+    if (certs.length === 0) {
+      grid.innerHTML = `
+        <div class="empty-state-notice" style="grid-column: 1 / -1; text-align: center; padding: 2.75rem 1rem; color: var(--text-secondary); background: var(--bg-card); border-radius: var(--radius-md); border: 1px dashed var(--border-subtle);">
+          <i class="fa-solid fa-certificate" style="font-size: 2.2rem; color: var(--accent-secondary); margin-bottom: 0.75rem; opacity: 0.7;"></i>
+          <h4 style="font-size: 1.1rem; margin-bottom: 0.35rem; color: #fff;">Certificates & Accreditations</h4>
+          <p style="font-size: 0.9rem; color: var(--text-muted); max-width: 480px; margin: 0 auto;">Professional certificates and cloud certifications currently being curated and verified. Check back soon!</p>
+        </div>
+      `;
+      return;
+    }
 
     grid.innerHTML = certs.map(c => `
       <div class="cert-card">
@@ -357,25 +445,41 @@
 
     // Experience Timeline
     const expTimeline = document.getElementById('experience-timeline');
-    if (expTimeline && resume.experience) {
-      expTimeline.innerHTML = resume.experience.map(e => `
-        <div class="timeline-item">
-          <div class="timeline-dot"></div>
-          <div class="timeline-card">
-            <h4 class="timeline-role">${escapeHtml(e.role)}</h4>
-            <div class="timeline-company-row">
-              <span class="timeline-company">${escapeHtml(e.company)}${e.location ? ' • ' + escapeHtml(e.location) : ''}</span>
-              <span class="timeline-period">${escapeHtml(e.period)}</span>
+    if (expTimeline) {
+      if (!resume.experience || resume.experience.length === 0) {
+        expTimeline.innerHTML = `
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <h4 class="timeline-role">Software Developer & Project Lead</h4>
+              <div class="timeline-company-row">
+                <span class="timeline-company">Independent & Applied Projects</span>
+                <span class="timeline-period">2024 - Present</span>
+              </div>
+              <p class="timeline-desc">Architecting modern web applications, AI-integrated gaming engines, and responsive web platforms with clean code and modern frameworks.</p>
             </div>
-            ${e.description ? `<p class="timeline-desc">${escapeHtml(e.description)}</p>` : ''}
-            ${e.achievements && e.achievements.length ? `
-              <ul class="timeline-achievements">
-                ${e.achievements.map(a => `<li>${escapeHtml(a)}</li>`).join('')}
-              </ul>
-            ` : ''}
           </div>
-        </div>
-      `).join('');
+        `;
+      } else {
+        expTimeline.innerHTML = resume.experience.map(e => `
+          <div class="timeline-item">
+            <div class="timeline-dot"></div>
+            <div class="timeline-card">
+              <h4 class="timeline-role">${escapeHtml(e.role)}</h4>
+              <div class="timeline-company-row">
+                <span class="timeline-company">${escapeHtml(e.company)}${e.location ? ' • ' + escapeHtml(e.location) : ''}</span>
+                <span class="timeline-period">${escapeHtml(e.period)}</span>
+              </div>
+              ${e.description ? `<p class="timeline-desc">${escapeHtml(e.description)}</p>` : ''}
+              ${e.achievements && e.achievements.length ? `
+                <ul class="timeline-achievements">
+                  ${e.achievements.map(a => `<li>${escapeHtml(a)}</li>`).join('')}
+                </ul>
+              ` : ''}
+            </div>
+          </div>
+        `).join('');
+      }
     }
 
     // Education Timeline
@@ -519,12 +623,21 @@
       btnIcon.className = 'fa-solid fa-spinner fa-spin';
 
       try {
-        const res = await fetch('/api/messages', {
+        let res = await fetch('./api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(formData)
-        });
+        }).catch(() => null);
 
+        if (!res || !res.ok) {
+          res = await fetch('/api/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+          }).catch(() => null);
+        }
+
+        if (!res) throw new Error('Network error sending message. Please try again or email directly.');
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to send message');
 
@@ -556,10 +669,17 @@
       };
     }
 
-    // 2. Server-Sent Events (SSE) from Express backend
+    // 2. Cross-tab localStorage storage event
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'portfolio_last_updated') {
+        loadPortfolioData(true);
+      }
+    });
+
+    // 3. Server-Sent Events (SSE) from Express backend
     if ('EventSource' in window) {
       try {
-        const evtSource = new EventSource('/api/events');
+        const evtSource = new EventSource(getApiUrl('/api/events'));
 
         evtSource.addEventListener('PORTFOLIO_UPDATED', (e) => {
           console.log('⚡ SSE Event: PORTFOLIO_UPDATED received', e.data);
@@ -623,18 +743,22 @@
     });
 
     if (toggleBtn && navLinks) {
-      toggleBtn.addEventListener('click', () => {
-        const isShown = navLinks.style.display === 'flex';
-        navLinks.style.display = isShown ? 'none' : 'flex';
-        if (!isShown) {
-          navLinks.style.flexDirection = 'column';
-          navLinks.style.position = 'absolute';
-          navLinks.style.top = '100%';
-          navLinks.style.left = '0';
-          navLinks.style.right = '0';
-          navLinks.style.background = 'rgba(7, 9, 19, 0.98)';
-          navLinks.style.padding = '1.5rem';
-          navLinks.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
+      toggleBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navLinks.classList.toggle('nav-open');
+      });
+
+      // Close when clicking any nav link
+      navLinks.querySelectorAll('a').forEach(link => {
+        link.addEventListener('click', () => {
+          navLinks.classList.remove('nav-open');
+        });
+      });
+
+      // Close when clicking outside navbar
+      document.addEventListener('click', (e) => {
+        if (!navbar.contains(e.target)) {
+          navLinks.classList.remove('nav-open');
         }
       });
     }

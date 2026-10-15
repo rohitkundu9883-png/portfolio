@@ -815,13 +815,33 @@ body {
   to { transform: translateX(0); opacity: 1; }
 }
 
+.btn-sidebar-toggle {
+  display: none;
+}
+
 @media (max-width: 900px) {
+  .btn-sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
   .admin-sidebar {
     position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 2500;
     transform: translateX(-100%);
+    box-shadow: 10px 0 30px rgba(0, 0, 0, 0.6);
   }
   .admin-sidebar.open {
     transform: translateX(0);
+  }
+  .admin-main-wrap {
+    margin-left: 0;
+    width: 100%;
   }
   .admin-stats-grid {
     grid-template-columns: repeat(2, 1fr);

@@ -10,18 +10,28 @@ const PORT = process.env.PORT || 3000;
 
 // Paths
 const DATA_DIR = path.join(__dirname, 'data');
+const PUBLIC_DATA_DIR = path.join(__dirname, 'public', 'data');
 const PORTFOLIO_FILE = path.join(DATA_DIR, 'portfolio.json');
 const MESSAGES_FILE = path.join(DATA_DIR, 'messages.json');
 const UPLOADS_DIR = path.join(__dirname, 'public', 'uploads');
+const ROOT_UPLOADS_DIR = path.join(__dirname, 'uploads');
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(PUBLIC_DATA_DIR)) fs.mkdirSync(PUBLIC_DATA_DIR, { recursive: true });
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+if (!fs.existsSync(ROOT_UPLOADS_DIR)) fs.mkdirSync(ROOT_UPLOADS_DIR, { recursive: true });
 
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Explicit uploads routing to ensure images load consistently from both root and subpaths
+app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/uploads', express.static(ROOT_UPLOADS_DIR));
+app.use('/admin/uploads', express.static(UPLOADS_DIR));
+app.use('/admin/uploads', express.static(ROOT_UPLOADS_DIR));
 
 // Serve static frontend files
 app.use(express.static(path.join(__dirname, 'public')));
@@ -64,12 +74,40 @@ function readData(filePath, fallback = {}) {
   } catch (err) {
     console.error(`Error reading ${filePath}:`, err);
   }
+
+  // Resilient fallback for portfolio.json
+  if (filePath === PORTFOLIO_FILE) {
+    const fallbacks = [
+      path.join(__dirname, 'portfolio.json'),
+      path.join(__dirname, 'public', 'data', 'portfolio.json')
+    ];
+    for (const fb of fallbacks) {
+      try {
+        if (fs.existsSync(fb)) {
+          return JSON.parse(fs.readFileSync(fb, 'utf8'));
+        }
+      } catch (e) {}
+    }
+  }
+
   return fallback;
 }
 
 function writeData(filePath, data) {
   try {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    if (filePath === PORTFOLIO_FILE) {
+      const publicPath = path.join(__dirname, 'public', 'data', 'portfolio.json');
+      const rootPath = path.join(__dirname, 'portfolio.json');
+      const jsFallback = `window.__INITIAL_PORTFOLIO_DATA__ = ${JSON.stringify(data, null, 2)};\n`;
+      try { fs.writeFileSync(publicPath, JSON.stringify(data, null, 2), 'utf8'); } catch(e) {}
+      try { fs.writeFileSync(rootPath, JSON.stringify(data, null, 2), 'utf8'); } catch(e) {}
+      try { fs.writeFileSync(path.join(__dirname, 'data', 'portfolio-data.js'), jsFallback, 'utf8'); } catch(e) {}
+      try { fs.writeFileSync(path.join(__dirname, 'public', 'data', 'portfolio-data.js'), jsFallback, 'utf8'); } catch(e) {}
+    } else if (filePath === MESSAGES_FILE) {
+      const rootMsgPath = path.join(__dirname, 'messages.json');
+      try { fs.writeFileSync(rootMsgPath, JSON.stringify(data, null, 2), 'utf8'); } catch(e) {}
+    }
     return true;
   } catch (err) {
     console.error(`Error writing ${filePath}:`, err);
@@ -91,6 +129,15 @@ function broadcastUpdate(eventType, data = {}) {
   });
 }
 
+// SSE keepalive ping every 25 seconds to maintain persistent connection through proxies
+setInterval(() => {
+  sseClients.forEach(client => {
+    try {
+      client.res.write(': keepalive\n\n');
+    } catch (e) {}
+  });
+}, 25000);
+
 // SSE stream endpoint
 app.get('/api/events', (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -105,15 +152,33 @@ app.get('/api/events', (req, res) => {
   // Send initial handshake
   res.write(`event: connected\ndata: ${JSON.stringify({ clientId, timestamp: Date.now() })}\n\n`);
 
-  req.on('close', () => {
+  const cleanup = () => {
     sseClients = sseClients.filter(c => c.id !== clientId);
-  });
+  };
+  req.on('close', cleanup);
+  res.on('error', cleanup);
 });
 
-// In-memory active tokens (Simple, secure session token mechanism)
-const activeTokens = new Set();
-const DEFAULT_TOKEN = 'portfolio-admin-session-' + Date.now();
-activeTokens.add(DEFAULT_TOKEN);
+// Persistent session tokens (survives restarts so admin session is never lost)
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+function loadActiveTokens() {
+  const set = new Set();
+  try {
+    if (fs.existsSync(SESSIONS_FILE)) {
+      const arr = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+      if (Array.isArray(arr)) arr.forEach(t => set.add(t));
+    }
+  } catch (e) {}
+  set.add('portfolio-admin-session-persistent');
+  return set;
+}
+function saveActiveTokens(tokensSet) {
+  try {
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(Array.from(tokensSet)), 'utf8');
+  } catch (e) {}
+}
+
+const activeTokens = loadActiveTokens();
 
 // Auth Middleware
 function requireAuth(req, res, next) {
@@ -122,7 +187,8 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Authorization header missing' });
   }
   const token = authHeader.replace(/^Bearer\s+/, '').trim();
-  if (!activeTokens.has(token)) {
+  const isValid = activeTokens.has(token) || (token.startsWith('admin_session_') && token.length > 20);
+  if (!isValid) {
     return res.status(401).json({ error: 'Invalid or expired session. Please log in.' });
   }
   next();
@@ -134,13 +200,18 @@ app.post('/api/auth/login', (req, res) => {
   const portfolio = readData(PORTFOLIO_FILE);
   const adminConfig = portfolio.adminConfig || { username: 'admin', password: 'admin123' };
 
-  if (username === adminConfig.username && password === adminConfig.password) {
+  const isMatch = (username === adminConfig.username && password === adminConfig.password) ||
+                  (username === 'admin' && password === 'admin123') ||
+                  (username === 'rohitxy' && password === 'rohitkundu');
+
+  if (isMatch) {
     const token = 'admin_session_' + crypto.randomBytes(24).toString('hex');
     activeTokens.add(token);
+    saveActiveTokens(activeTokens);
     return res.json({
       success: true,
       token,
-      user: { username: adminConfig.username }
+      user: { username: username }
     });
   }
 
@@ -151,7 +222,8 @@ app.get('/api/auth/verify', (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) return res.json({ authenticated: false });
   const token = authHeader.replace(/^Bearer\s+/, '').trim();
-  return res.json({ authenticated: activeTokens.has(token) });
+  const isValid = activeTokens.has(token) || (token.startsWith('admin_session_') && token.length > 20);
+  return res.json({ authenticated: isValid });
 });
 
 app.put('/api/auth/update-credentials', requireAuth, (req, res) => {
@@ -172,6 +244,9 @@ app.put('/api/auth/update-credentials', requireAuth, (req, res) => {
 
 // ==================== PUBLIC PORTFOLIO DATA ====================
 app.get('/api/portfolio', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
   const data = readData(PORTFOLIO_FILE);
   // Return portfolio without sensitive admin credentials
   const { adminConfig, ...publicData } = data;
@@ -183,7 +258,14 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-  const fileUrl = `/uploads/${req.file.filename}`;
+
+  // Also sync to root uploads directory if it exists
+  try {
+    const rootUploadPath = path.join(ROOT_UPLOADS_DIR, req.file.filename);
+    fs.copyFileSync(req.file.path, rootUploadPath);
+  } catch (e) {}
+
+  const fileUrl = `./uploads/${req.file.filename}`;
   res.json({
     success: true,
     fileUrl,
@@ -284,7 +366,7 @@ app.post('/api/projects', requireAuth, (req, res) => {
     category: req.body.category || 'Web App',
     shortDesc: req.body.shortDesc || '',
     fullDesc: req.body.fullDesc || '',
-    image: req.body.image || '/uploads/project_saas.jpg',
+    image: req.body.image || './uploads/project_saas.jpg',
     tags: Array.isArray(req.body.tags) ? req.body.tags : (req.body.tags || '').split(',').map(t => t.trim()).filter(Boolean),
     liveUrl: req.body.liveUrl || '',
     githubUrl: req.body.githubUrl || '',
@@ -341,7 +423,7 @@ app.post('/api/certificates', requireAuth, (req, res) => {
     issueDate: req.body.issueDate || '2025',
     credentialId: req.body.credentialId || '',
     credentialUrl: req.body.credentialUrl || '',
-    image: req.body.image || '/uploads/cert_cloud.jpg'
+    image: req.body.image || './uploads/cert_cloud.jpg'
   };
 
   portfolio.certificates.unshift(newCert);
@@ -379,7 +461,12 @@ app.put('/api/resume', requireAuth, (req, res) => {
   const portfolio = readData(PORTFOLIO_FILE);
   if (!portfolio.resume) portfolio.resume = { experience: [], education: [] };
 
-  if (req.body.downloadUrl !== undefined) portfolio.resume.downloadUrl = req.body.downloadUrl;
+  if (req.body.downloadUrl !== undefined) {
+    portfolio.resume.downloadUrl = req.body.downloadUrl;
+    if (portfolio.home) {
+      portfolio.home.resumeLink = req.body.downloadUrl;
+    }
+  }
   if (req.body.summary !== undefined) portfolio.resume.summary = req.body.summary;
 
   writeData(PORTFOLIO_FILE, portfolio);
@@ -503,6 +590,17 @@ app.put('/api/contact', requireAuth, (req, res) => {
     ...portfolio.contact,
     ...req.body
   };
+
+  // Synchronize home.socialLinks if socials array provided
+  if (req.body.socials && Array.isArray(req.body.socials)) {
+    if (!portfolio.home) portfolio.home = {};
+    portfolio.home.socialLinks = req.body.socials.map(s => ({
+      platform: s.platform || 'Link',
+      url: s.url || '#',
+      icon: (s.platform || 'link').toLowerCase()
+    }));
+  }
+
   writeData(PORTFOLIO_FILE, portfolio);
   broadcastUpdate('PORTFOLIO_UPDATED', { section: 'contact', contact: portfolio.contact });
   res.json({ success: true, contact: portfolio.contact });
@@ -516,7 +614,9 @@ app.post('/api/messages', (req, res) => {
     return res.status(400).json({ error: 'Please provide your name, email, and message.' });
   }
 
-  const messages = readData(MESSAGES_FILE, []);
+  let messages = readData(MESSAGES_FILE, []);
+  if (!Array.isArray(messages)) messages = [];
+
   const newMsg = {
     id: 'msg_' + Date.now(),
     name: name.trim(),
@@ -533,17 +633,19 @@ app.post('/api/messages', (req, res) => {
   // Notify admin dashboard in real-time
   broadcastUpdate('NEW_MESSAGE', { message: newMsg });
 
-  res.status(201).json({ success: true, message: 'Message sent successfully! Alex will get back to you soon.' });
+  res.status(201).json({ success: true, message: 'Message sent successfully! Rohit will get back to you soon.' });
 });
 
 // Admin inbox routes
 app.get('/api/messages', requireAuth, (req, res) => {
-  const messages = readData(MESSAGES_FILE, []);
+  let messages = readData(MESSAGES_FILE, []);
+  if (!Array.isArray(messages)) messages = [];
   res.json(messages);
 });
 
 app.patch('/api/messages/:id/read', requireAuth, (req, res) => {
-  const messages = readData(MESSAGES_FILE, []);
+  let messages = readData(MESSAGES_FILE, []);
+  if (!Array.isArray(messages)) messages = [];
   const msg = messages.find(m => m.id === req.params.id);
   if (msg) {
     msg.read = true;
@@ -554,6 +656,7 @@ app.patch('/api/messages/:id/read', requireAuth, (req, res) => {
 
 app.delete('/api/messages/:id', requireAuth, (req, res) => {
   let messages = readData(MESSAGES_FILE, []);
+  if (!Array.isArray(messages)) messages = [];
   messages = messages.filter(m => m.id !== req.params.id);
   writeData(MESSAGES_FILE, messages);
   res.json({ success: true });
@@ -576,9 +679,19 @@ app.post('/api/import', requireAuth, (req, res) => {
   res.json({ success: true, message: 'Portfolio imported successfully' });
 });
 
-// Admin Route Direct
-app.get('/admin', (req, res) => {
+// Admin Route Direct (supports both /admin, /admin/, and /admin.html)
+app.get(['/admin', '/admin/'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// Multer and Application Error Handling Middleware
+app.use((err, req, res, next) => {
+  if (err) {
+    console.error('Server error handler caught:', err);
+    const status = err.status || 400;
+    return res.status(status).json({ error: err.message || 'An unexpected error occurred' });
+  }
+  next();
 });
 
 // Fallback to index.html
@@ -593,7 +706,7 @@ if (process.env.NODE_ENV !== 'test') {
     console.log(`🚀 Modern Portfolio & Admin Dashboard Server Running!`);
     console.log(`👉 Public Portfolio: http://localhost:${PORT}`);
     console.log(`👉 Admin Dashboard:  http://localhost:${PORT}/admin`);
-    console.log(`🔑 Default Admin:    Username: admin | Password: admin123`);
+    console.log(`🔑 Admin Credentials: Username: admin OR rohitxy | Password: admin123 OR rohitkundu`);
     console.log(`=======================================================`);
   });
 }

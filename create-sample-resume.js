@@ -54,6 +54,6 @@ startxref
 643
 %%EOF`;
 
-const targetPath = path.join(__dirname, '..', 'public', 'uploads', 'Alex_Rivera_Resume.pdf');
+const targetPath = path.join(__dirname, 'public', 'uploads', 'Alex_Rivera_Resume.pdf');
 fs.writeFileSync(targetPath, pdfContent.trim(), 'utf8');
 console.log('Sample PDF created at:', targetPath);

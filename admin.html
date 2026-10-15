@@ -29,19 +29,19 @@
       <p class="login-subtitle">Sign in to manage and customize your portfolio</p>
 
       <div class="demo-credentials-badge">
-        <i class="fa-solid fa-key"></i> <strong>Demo Credentials:</strong><br>
-        Username: <code>admin</code> &nbsp;|&nbsp; Password: <code>admin123</code>
+        <i class="fa-solid fa-key"></i> <strong>Admin Credentials:</strong><br>
+        Username: <code>rohitxy</code> (or <code>admin</code>) &nbsp;|&nbsp; Password: <code>rohitkundu</code> (or <code>admin123</code>)
       </div>
 
       <form id="login-form">
         <div style="margin-bottom: 1.25rem; text-align: left;">
           <label class="admin-label" for="login-username">Admin Username</label>
-          <input type="text" id="login-username" class="admin-input" value="admin" required autocomplete="username">
+          <input type="text" id="login-username" class="admin-input" value="rohitxy" required autocomplete="username">
         </div>
 
         <div style="margin-bottom: 1.75rem; text-align: left;">
           <label class="admin-label" for="login-password">Password</label>
-          <input type="password" id="login-password" class="admin-input" value="admin123" required autocomplete="current-password">
+          <input type="password" id="login-password" class="admin-input" value="rohitkundu" required autocomplete="current-password">
         </div>
 
         <button type="submit" class="admin-btn admin-btn-primary" id="login-btn" style="width: 100%; padding: 0.85rem; font-size: 1rem;">
@@ -117,11 +117,16 @@
   <div class="admin-main-wrap">
     <!-- Topbar -->
     <header class="admin-topbar">
-      <div class="topbar-left">
-        <h2 class="topbar-section-title" id="topbar-title">Dashboard Overview</h2>
-        <span class="sync-status-indicator">
-          <i class="fa-solid fa-circle-check"></i> Live Auto-Sync Active
-        </span>
+      <div class="topbar-left" style="display: flex; align-items: center; gap: 0.75rem;">
+        <button type="button" class="admin-btn admin-btn-secondary admin-btn-sm btn-sidebar-toggle" id="btn-sidebar-toggle" aria-label="Toggle sidebar menu">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div>
+          <h2 class="topbar-section-title" id="topbar-title">Dashboard Overview</h2>
+          <span class="sync-status-indicator">
+            <i class="fa-solid fa-circle-check"></i> Live Auto-Sync Active
+          </span>
+        </div>
       </div>
 
       <div class="topbar-right">
@@ -928,6 +933,9 @@
 
   <!-- Toast Container -->
   <div class="admin-toast-box" id="admin-toast-box"></div>
+
+  <!-- Portfolio Fallback Data -->
+  <script src="./data/portfolio-data.js?v=1.1"></script>
 
   <!-- Admin JavaScript -->
   <script src="./js/admin.js?v=1.1"></script>
